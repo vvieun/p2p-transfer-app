@@ -7,315 +7,196 @@ const apiClient = axios.create({
 });
 
 function App() {
-  const [currentUser, setCurrentUser] = useState(null);
-  
-  const [authMode, setAuthMode] = useState('login');
-  const [authForm, setAuthForm] = useState({ username: '', password: '' });
-
-  const [accForm, setAccForm] = useState({ initialBalance: '' });
-  const [transferForm, setTransferForm] = useState({ fromAccountNumber: '', toAccountNumber: '', amount: '' });
-
+  const [user, setUser] = useState(null);
+  const [mode, setMode] = useState('login');
+  const [auth, setAuth] = useState({ username: '', password: '' });
+  const [newAccountBalance, setNewAccountBalance] = useState('');
+  const [transfer, setTransfer] = useState({ fromAccountNumber: '', toAccountNumber: '', amount: '' });
   const [accounts, setAccounts] = useState([]);
-  const [logMessages, setLogMessages] = useState([]);
+  const [logs, setLogs] = useState([]);
 
-  const log = (message, type = 'success', executionTime = null) => {
+  const writeLog = (message, type = 'success', executionTimeMs = null) => {
     const timestamp = new Date().toLocaleTimeString();
-    const timeInfo = executionTime ? ` (${executionTime}мс)` : '';
-    const fullMessage = `[${timestamp}] ${message}${timeInfo}`;
-    setLogMessages(prev => [{ message: fullMessage, type }, ...prev]);
+    const duration = executionTimeMs ? ` (${executionTimeMs} мс)` : '';
+    setLogs((prev) => [{ message: `[${timestamp}] ${message}${duration}`, type }, ...prev]);
   };
-  
-  const handleApiError = (error) => {
-    console.error('API Error:', error);
-    
-    if (error.response && error.response.data) {
-      const errorData = error.response.data;
-      let errorMessage;
-      
-      if (errorData.data && errorData.message) {
-        // Новый формат API ответа
-        errorMessage = errorData.message;
-        log(errorMessage, 'error', errorData.executionTimeMs);
-      } else if (typeof errorData === 'object') {
-        errorMessage = JSON.stringify(errorData);
-        log(errorMessage, 'error');
-      } else {
-        errorMessage = errorData;
-        log(errorMessage, 'error');
+
+  const getErrorMessage = (error) => {
+    const payload = error?.response?.data;
+    if (!payload) return error?.message || 'произошла неизвестная ошибка';
+    if (payload?.message) return payload.message;
+    return typeof payload === 'string' ? payload : JSON.stringify(payload);
+  };
+
+  const callApi = async (config, successMessage) => {
+    try {
+      const { data } = await apiClient(config);
+      if (successMessage) {
+        const text = typeof successMessage === 'function' ? successMessage(data.data) : successMessage;
+        writeLog(text, 'success', data.executionTimeMs);
       }
-    } else if (error.message) {
-      log(`Ошибка: ${error.message}`, 'error');
-    } else {
-      log('Произошла неизвестная ошибка', 'error');
-    }
-  };
-
-  const handleInputChange = (setter) => (e) => {
-    const { name, value } = e.target;
-    setter(prev => ({ ...prev, [name]: value }));
-  };
-
-  const handleLogin = async (e) => {
-    e.preventDefault();
-    try {
-      const response = await apiClient.post('/users/login', authForm);
-      const apiResponse = response.data;
-      const user = apiResponse.data;
-      
-      setCurrentUser(user);
-      log(`Добро пожаловать, ${user.username}!`, 'success', apiResponse.executionTimeMs);
-      
-      loadUserAccounts(user.userId);
+      return data;
     } catch (error) {
-      handleApiError(error);
+      writeLog(getErrorMessage(error), 'error', error?.response?.data?.executionTimeMs);
+      return null;
     }
   };
 
-  const handleRegister = async (e) => {
+  const updateAuth = (e) => setAuth((prev) => ({ ...prev, [e.target.name]: e.target.value }));
+  const updateTransfer = (e) => setTransfer((prev) => ({ ...prev, [e.target.name]: e.target.value }));
+  const toKopecks = (value) => Math.round(Number(value || 0) * 100);
+
+  const loadAccounts = async (userId) => {
+    const response = await callApi({ method: 'get', url: `/accounts/user/${userId}` }, 'счета обновлены');
+    if (response) setAccounts(response.data || []);
+  };
+
+  const handleAuth = async (e) => {
     e.preventDefault();
-    try {
-      const response = await apiClient.post('/users/register', authForm);
-      const apiResponse = response.data;
-      const user = apiResponse.data;
-      
-      const normalizedUser = {
-        userId: user.id,
-        username: user.username
-      };
-      setCurrentUser(normalizedUser);
-      log(`Регистрация успешна! Добро пожаловать, ${user.username}!`, 'success', apiResponse.executionTimeMs);
-    } catch (error) {
-      handleApiError(error);
-    }
+    const isLogin = mode === 'login';
+    const response = await callApi(
+      { method: 'post', url: isLogin ? '/users/login' : '/users/register', data: auth },
+      (data) => `${isLogin ? 'с возвращением' : 'регистрация прошла успешно'}, ${data.username}`
+    );
+    if (!response) return;
+    const nextUser = isLogin ? response.data : { userId: response.data.id, username: response.data.username };
+    setUser(nextUser);
+    if (isLogin) await loadAccounts(nextUser.userId);
   };
 
   const handleLogout = () => {
-    setCurrentUser(null);
+    setUser(null);
     setAccounts([]);
-    log('Вы вышли из системы.');
-  };
-
-  const loadUserAccounts = async (userId) => {
-    try {
-      const response = await apiClient.get(`/accounts/user/${userId}`);
-      const apiResponse = response.data;
-      
-      setAccounts(apiResponse.data);
-      log(`Счета успешно загружены.`, 'success', apiResponse.executionTimeMs);
-    } catch (error) {
-      handleApiError(error);
-    }
+    setTransfer({ fromAccountNumber: '', toAccountNumber: '', amount: '' });
+    writeLog('вы вышли из аккаунта');
   };
 
   const handleCreateAccount = async (e) => {
     e.preventDefault();
-    try {
-      const initialBalanceKopecks = Math.round(parseFloat(accForm.initialBalance) * 100);
-      
-      const response = await apiClient.post('/accounts', {
-        userId: currentUser.userId,
-        initialBalance: initialBalanceKopecks
-      });
-      
-      const apiResponse = response.data;
-      const account = apiResponse.data;
-      
-      log(`Счет создан: ${account.accountNumber} с балансом ${(account.balance / 100).toFixed(2)} руб.`, 'success', apiResponse.executionTimeMs);
-      
-      setAccForm({ initialBalance: '' });
-      
-      loadUserAccounts(currentUser.userId);
-    } catch (error) {
-      handleApiError(error);
-    }
+    const response = await callApi(
+      { method: 'post', url: '/accounts', data: { userId: user.userId, initialBalance: toKopecks(newAccountBalance) } },
+      (account) => `счет ${account.accountNumber} создан, баланс ${(account.balance / 100).toFixed(2)} руб.`
+    );
+    if (!response) return;
+    setNewAccountBalance('');
+    await loadAccounts(user.userId);
   };
-  
+
   const handleTransfer = async (e) => {
     e.preventDefault();
-    try {
-      const amountKopecks = Math.round(parseFloat(transferForm.amount) * 100);
-      
-      const response = await apiClient.post(`/accounts/transfer?userId=${currentUser.userId}`, {
-          fromAccountNumber: transferForm.fromAccountNumber,
-          toAccountNumber: transferForm.toAccountNumber,
-          amount: amountKopecks
-      });
-      
-      const apiResponse = response.data;
-      const message = typeof apiResponse.data === 'object' ? JSON.stringify(apiResponse.data) : apiResponse.data;
-      
-      log(message, 'success', apiResponse.executionTimeMs);
-      
-      setTransferForm({ fromAccountNumber: '', toAccountNumber: '', amount: '' });
-      
-      loadUserAccounts(currentUser.userId);
-    } catch (error) {
-      handleApiError(error);
-    }
+    const response = await callApi(
+      {
+        method: 'post',
+        url: `/accounts/transfer?userId=${user.userId}`,
+        data: { ...transfer, amount: toKopecks(transfer.amount) }
+      },
+      (result) => (typeof result === 'string' ? result : JSON.stringify(result))
+    );
+    if (!response) return;
+    setTransfer({ fromAccountNumber: '', toAccountNumber: '', amount: '' });
+    await loadAccounts(user.userId);
   };
-  
+
   const handleDeleteAccount = async (accountId) => {
-    try {
-      const response = await apiClient.delete(`/accounts/${accountId}?userId=${currentUser.userId}`);
-      const apiResponse = response.data;
-      const message = typeof apiResponse.data === 'object' ? JSON.stringify(apiResponse.data) : apiResponse.data;
-      
-      log(message, 'success', apiResponse.executionTimeMs);
-      
-      loadUserAccounts(currentUser.userId);
-    } catch (error) {
-      handleApiError(error);
-    }
+    const response = await callApi(
+      { method: 'delete', url: `/accounts/${accountId}?userId=${user.userId}` },
+      (result) => (typeof result === 'string' ? result : JSON.stringify(result))
+    );
+    if (response) await loadAccounts(user.userId);
   };
 
-  const toggleAuthMode = () => {
-    setAuthMode(authMode === 'login' ? 'register' : 'login');
-    setAuthForm({ username: '', password: '' });
-  };
-
-  const inputStyle = {
-    padding: '8px',
-    marginBottom: '10px',
-    width: '100%'
+  const toggleMode = () => {
+    setMode((prev) => (prev === 'login' ? 'register' : 'login'));
+    setAuth({ username: '', password: '' });
   };
 
   return (
     <div className="App">
-      <h1>P2P-переводы</h1>
-      
-      {/* Authentication section - shown when user is not logged in */}
-      {!currentUser ? (
-        <div className="container auth-container">
-          <h2>{authMode === 'login' ? 'Вход в систему' : 'Регистрация'}</h2>
-          <form onSubmit={authMode === 'login' ? handleLogin : handleRegister}>
-            <input 
-              name="username" 
-              value={authForm.username} 
-              onChange={handleInputChange(setAuthForm)} 
-              placeholder="Логин" 
-              required 
-              style={inputStyle}
-            />
-            <input 
-              name="password" 
-              type="password" 
-              value={authForm.password} 
-              onChange={handleInputChange(setAuthForm)} 
-              placeholder="Пароль" 
-              required 
-              style={inputStyle}
-            />
-            <button type="submit">
-              {authMode === 'login' ? 'Войти' : 'Зарегистрироваться'}
-            </button>
-          </form>
-          <button 
-            className="toggle-auth-btn" 
-            onClick={toggleAuthMode}
-            style={{ background: 'transparent', border: 'none', color: '#007bff', marginTop: '10px', cursor: 'pointer' }}
-          >
-            {authMode === 'login' ? 'Нет аккаунта? Зарегистрироваться' : 'Уже есть аккаунт? Войти'}
-          </button>
-        </div>
-      ) : (
-        <div>
-          <div className="user-header" style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 20px', backgroundColor: '#f5f5f5', marginBottom: '20px', alignItems: 'center' }}>
-            <span>Пользователь: <strong>{currentUser.username}</strong></span>
-            <button onClick={handleLogout} style={{ background: '#dc3545', color: 'white', border: 'none', padding: '5px 10px', borderRadius: '3px', cursor: 'pointer' }}>
-              Выйти
-            </button>
-          </div>
+      <header className="hero">
+        <h1>p2p transfer app</h1>
+        <p>быстрые переводы между счетами без лишних шагов</p>
+      </header>
 
-          <div className="container">
-            <h2>1. Создание счета</h2>
-            <form onSubmit={handleCreateAccount}>
-              <input 
-                name="initialBalance" 
-                type="number" 
+      {!user ? (
+        <section className="card auth-card">
+          <h2>{mode === 'login' ? 'вход' : 'регистрация'}</h2>
+          <form onSubmit={handleAuth} className="form">
+            <input name="username" value={auth.username} onChange={updateAuth} placeholder="логин" required />
+            <input name="password" type="password" value={auth.password} onChange={updateAuth} placeholder="пароль" required />
+            <button type="submit">{mode === 'login' ? 'войти' : 'создать аккаунт'}</button>
+          </form>
+          <button className="link-btn" onClick={toggleMode}>
+            {mode === 'login' ? 'нет аккаунта? зарегистрироваться' : 'уже есть аккаунт? войти'}
+          </button>
+        </section>
+      ) : (
+        <>
+          <section className="user-bar card">
+            <span>пользователь: <strong>{user.username}</strong></span>
+            <button className="danger-btn" onClick={handleLogout}>выйти</button>
+          </section>
+
+          <section className="card">
+            <h2>создать счет</h2>
+            <form onSubmit={handleCreateAccount} className="form inline">
+              <input
+                name="initialBalance"
+                type="number"
                 step="0.01"
-                value={accForm.initialBalance} 
-                onChange={handleInputChange(setAccForm)} 
-                placeholder="Начальный баланс (в рублях)" 
-                required 
-                style={inputStyle}
-              />
-              <button type="submit">Создать счет</button>
-            </form>
-          </div>
-          
-          <div className="container">
-            <h2>2. Перевод средств</h2>
-            <form onSubmit={handleTransfer}>
-              <select 
-                name="fromAccountNumber" 
-                value={transferForm.fromAccountNumber} 
-                onChange={handleInputChange(setTransferForm)}
+                min="0"
+                value={newAccountBalance}
+                onChange={(e) => setNewAccountBalance(e.target.value)}
+                placeholder="начальный баланс, руб."
                 required
-                style={inputStyle}
-              >
-                <option value="">Выберите счет-источник</option>
-                {accounts.map(acc => (
-                  <option key={acc.id} value={acc.accountNumber}>
-                    {acc.accountNumber} - Баланс: {(acc.balance / 100).toFixed(2)} руб.
+              />
+              <button type="submit">создать</button>
+            </form>
+          </section>
+
+          <section className="card">
+            <h2>перевод</h2>
+            <form onSubmit={handleTransfer} className="form">
+              <select name="fromAccountNumber" value={transfer.fromAccountNumber} onChange={updateTransfer} required>
+                <option value="">с какого счета</option>
+                {accounts.map((account) => (
+                  <option key={account.id} value={account.accountNumber}>
+                    {account.accountNumber} | {(account.balance / 100).toFixed(2)} руб.
                   </option>
                 ))}
               </select>
-              <input 
-                name="toAccountNumber" 
-                value={transferForm.toAccountNumber} 
-                onChange={handleInputChange(setTransferForm)} 
-                placeholder="Номер счета получателя" 
-                required 
-                style={inputStyle}
-              />
-              <input 
-                name="amount" 
-                type="number"
-                step="0.01"
-                value={transferForm.amount} 
-                onChange={handleInputChange(setTransferForm)} 
-                placeholder="Сумма (в рублях)" 
-                required 
-                style={inputStyle}
-              />
-              <button type="submit">Перевести</button>
+              <input name="toAccountNumber" value={transfer.toAccountNumber} onChange={updateTransfer} placeholder="номер счета получателя" required />
+              <input name="amount" type="number" step="0.01" min="0.01" value={transfer.amount} onChange={updateTransfer} placeholder="сумма, руб." required />
+              <button type="submit">перевести</button>
             </form>
-          </div>
-          
-          <div className="container">
-            <h2>3. Мои счета</h2>
+          </section>
+
+          <section className="card">
+            <h2>мои счета</h2>
             <div className="accounts-list">
-              {accounts.length === 0 ? (
-                <p>У вас пока нет счетов. Создайте свой первый счет!</p>
-              ) : (
-                accounts.map(acc => (
-                  <div key={acc.id} className="account-item">
-                    <b>Счет:</b> {acc.accountNumber}, <b>Баланс:</b> {(acc.balance / 100).toFixed(2)} руб.
-                    <button 
-                      className="delete-btn" 
-                      onClick={() => handleDeleteAccount(acc.id)}
-                      style={{ marginLeft: '10px', background: '#ff6666', border: 'none', color: 'white', padding: '3px 8px', borderRadius: '3px', cursor: 'pointer' }}
-                    >
-                      Удалить счет
-                    </button>
+              {accounts.length ? accounts.map((account) => (
+                <article key={account.id} className="account-item">
+                  <div className="account-meta">
+                    <span>{account.accountNumber}</span>
+                    <strong>{(account.balance / 100).toFixed(2)} руб.</strong>
                   </div>
-                ))
-              )}
+                  <button className="danger-btn small" onClick={() => handleDeleteAccount(account.id)}>удалить</button>
+                </article>
+              )) : <p className="muted">у вас пока нет счетов</p>}
             </div>
-          </div>
-        </div>
+          </section>
+        </>
       )}
 
-      <div className="container">
-        <h2>Лог операций:</h2>
+      <section className="card">
+        <h2>история операций</h2>
         <div className="log-box">
-          {logMessages.map((log, index) => (
-            <div key={index} className={`log-message ${log.type}`}>
-              {`> ${log.message}`}
-            </div>
-          ))}
+          {logs.length ? logs.map((item, index) => (
+            <div key={index} className={`log-message ${item.type}`}>{item.message}</div>
+          )) : (
+            <p className="muted">здесь будут ваши действия</p>
+          )}
         </div>
-      </div>
+      </section>
     </div>
   );
 }
