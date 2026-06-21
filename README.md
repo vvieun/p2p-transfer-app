@@ -1,28 +1,30 @@
+[English](README.md) · [Русский](README.ru.md)
+
 # p2p transfer app
 
-приложение для переводов между счетами.
-пользователь может зарегистрироваться, создать счет, посмотреть свои счета и сделать перевод.
+An app to send money between accounts.
+A user can sign up, make an account, see their accounts, and send money.
 
-## стек
+## Stack
 
 - backend: java, spring boot, maven
 - frontend: react, axios
-- база данных: postgresql
-- контейнеризация: docker, docker compose
+- database: postgresql
+- containerization: docker, docker compose
 
-## запуск
+## Running
 
 ```bash
 ./start.sh
 ```
 
-остановка:
+To stop:
 
 ```bash
 ./stop.sh
 ```
 
-или вручную:
+Or do it by hand:
 
 ```bash
 cd backend
@@ -32,7 +34,7 @@ cd frontend
 npm start
 ```
 
-## тесты
+## Tests
 
 ```bash
 cd backend
